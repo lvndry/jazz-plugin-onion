@@ -1,0 +1,15 @@
+{
+  "name": "jazz-plugin-onion",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@jazz/plugin-sdk": "/Users/lvndry/github/jazz/packages/plugin-sdk",
+    "@types/bun": "^1.4.3",
+    "typescript": "^7.0.2"
+  }
+}
