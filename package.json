@@ -1,15 +1,17 @@
 {
   "name": "jazz-plugin-onion",
   "version": "0.1.0",
-  "private": true,
+  "description": "A Jazz plugin that searches and reads Tor onion services through your local Tor proxy.",
+  "license": "MIT",
   "type": "module",
+  "packageManager": "bun@1.4.2",
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@jazz/plugin-sdk": "/Users/lvndry/github/jazz/packages/plugin-sdk",
     "@types/bun": "^1.4.3",
+    "@types/node": "^26.6.5",
     "typescript": "^7.0.2"
   }
 }

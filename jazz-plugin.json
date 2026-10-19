@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "id": "com.lvndry.onion",
+  "id": "com.jazz.plugins.onion",
   "name": "Onion search",
   "version": "0.1.0",
   "hostApi": 1,
