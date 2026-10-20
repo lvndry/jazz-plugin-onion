@@ -1,7 +1,7 @@
 /**
- * A dependency-free HTTP/1.1 GET client that tunnels through a Tor SOCKS5 proxy. The hostname is
- * handed to the proxy unresolved (SOCKS5 domain address type), so `.onion` names resolve inside Tor
- * and no DNS query ever leaves the machine.
+ * A dependency-free HTTP/1.1 client (GET and POST) that tunnels through a Tor SOCKS5 proxy.
+ * The hostname is handed to the proxy unresolved (SOCKS5 domain address type), so `.onion`
+ * names resolve inside Tor and no DNS query ever leaves the machine.
  */
 
 import { connect as netConnect, type Socket } from "node:net";
@@ -25,6 +25,14 @@ export interface TorFetchOptions {
   readonly signal: AbortSignal;
   readonly timeoutMs?: number;
   readonly maxResponseBytes?: number;
+  /** Override the request User-Agent (e.g. for APIs that reject browser agents). */
+  readonly userAgent?: string;
+}
+
+interface TorRequest {
+  readonly method: "GET" | "POST";
+  readonly body: Uint8Array | undefined;
+  readonly contentType: string | undefined;
 }
 
 const DEFAULT_TOR_PROXY: TorProxy = { host: "127.0.0.1", port: 9050 };
@@ -324,6 +332,7 @@ export function parseHttpResponse(raw: Buffer, url: string, truncated: boolean):
 
 async function requestOnce(
   target: URL,
+  request: TorRequest,
   options: TorFetchOptions,
   signal: AbortSignal,
 ): Promise<HttpResponse> {
@@ -340,19 +349,23 @@ async function requestOnce(
       socket = await upgradeToTls(socket, target.hostname);
     }
     const hostHeader = target.port === "" ? target.hostname : `${target.hostname}:${target.port}`;
-    socket.write(
-      [
-        `GET ${target.pathname}${target.search} HTTP/1.1`,
-        `Host: ${hostHeader}`,
-        `User-Agent: ${USER_AGENT}`,
-        "Accept: text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5",
-        "Accept-Language: en-US,en;q=0.5",
-        "Accept-Encoding: identity",
-        "Connection: close",
-        "",
-        "",
-      ].join("\r\n"),
-    );
+    const lines = [
+      `${request.method} ${target.pathname}${target.search} HTTP/1.1`,
+      `Host: ${hostHeader}`,
+      `User-Agent: ${options.userAgent ?? USER_AGENT}`,
+      "Accept: text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5",
+      "Accept-Language: en-US,en;q=0.5",
+      "Accept-Encoding: identity",
+    ];
+    if (request.method === "POST") {
+      lines.push(`Content-Type: ${request.contentType ?? "application/x-www-form-urlencoded"}`);
+      lines.push(`Content-Length: ${request.body?.byteLength ?? 0}`);
+    }
+    lines.push("Connection: close", "", "");
+    socket.write(lines.join("\r\n"));
+    if (request.body !== undefined) {
+      socket.write(Buffer.from(request.body));
+    }
     const { raw, truncated } = await readResponse(
       socket,
       options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
@@ -369,13 +382,17 @@ async function requestOnce(
   }
 }
 
-/** GETs an onion URL over Tor, following redirects that stay on onion hosts. */
-export async function torFetch(url: string, options: TorFetchOptions): Promise<HttpResponse> {
+async function followRedirects(
+  url: string,
+  options: TorFetchOptions,
+  request: TorRequest,
+): Promise<HttpResponse> {
   const signal = AbortSignal.any([
     options.signal,
     AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
   ]);
   let target = new URL(url);
+  let current = request;
   for (let redirects = 0; ; redirects++) {
     if (target.protocol !== "http:" && target.protocol !== "https:") {
       throw new Error(`Unsupported protocol ${target.protocol}`);
@@ -383,7 +400,7 @@ export async function torFetch(url: string, options: TorFetchOptions): Promise<H
     if (!isOnionHost(target.hostname)) {
       throw new Error(`${target.hostname} is not a v3 .onion address`);
     }
-    const response = await requestOnce(target, options, signal);
+    const response = await requestOnce(target, current, options, signal);
     const location = response.headers.get("location");
     if (response.status < 300 || response.status >= 400 || location === undefined) {
       return response;
@@ -392,5 +409,31 @@ export async function torFetch(url: string, options: TorFetchOptions): Promise<H
       throw new Error(`Too many redirects from ${url}`);
     }
     target = new URL(location, target);
+    // 301/302/303 drop the body and switch to GET; 307/308 keep method and body.
+    if (response.status === 303 || (current.method === "POST" && response.status <= 302)) {
+      current = { method: "GET", body: undefined, contentType: undefined };
+    }
   }
+}
+
+/** GETs an onion URL over Tor, following redirects that stay on onion hosts. */
+export function torFetch(url: string, options: TorFetchOptions): Promise<HttpResponse> {
+  return followRedirects(url, options, { method: "GET", body: undefined, contentType: undefined });
+}
+
+/**
+ * POSTs a body to an onion URL over Tor. `contentType` defaults to
+ * `application/x-www-form-urlencoded` when omitted.
+ */
+export function torPost(
+  url: string,
+  body: string,
+  options: TorFetchOptions,
+  contentType?: string,
+): Promise<HttpResponse> {
+  return followRedirects(url, options, {
+    method: "POST",
+    body: new TextEncoder().encode(body),
+    contentType,
+  });
 }

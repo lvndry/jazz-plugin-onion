@@ -1,96 +1,81 @@
-# jazz-plugin-onion
+# Onion search
 
-A [Jazz](https://github.com/lvndry/jazz) plugin that lets an agent search and read Tor onion
-services. Requests go through your local Tor proxy, and the plugin reaches only `.onion` addresses.
+Jazz plugin for researching Tor onion services. All egress goes through the local Tor
+SOCKS proxy (default `127.0.0.1:9050`), the hostname is resolved inside Tor, and only
+`.onion` hosts are accepted — a redirect to the clearnet aborts the fetch.
 
-## What it does
+## Tools
 
-The plugin adds 2 read-only tools:
+### `search`
 
-- **`search`** finds onion sites matching a query and returns up to 30 results, 10 by default.
-  Each result has a title, an `.onion` URL and a snippet.
-  - The plugin searches [Ahmia](https://ahmia.fi) through its own onion address. Ahmia filters
-    abuse material out of its index.
-  - Arguments: `query` (required) and `limit`.
-- **`fetch_page`** reads one onion page and returns its title, readable text and up to 40 onion
-  links. It returns up to 12,000 characters of text by default and at most 50,000.
-  - It loads no images, scripts or styles.
-  - It skips content that isn't text. A response larger than 5 MB is cut off.
-  - Arguments: `url` (required) and `maxChars`.
+Query a dark-web search source. `source` selects the backend:
 
-Each result is marked as untrusted third-party data before it reaches the model.
+- **`ahmia`** (default) — the curated Ahmia index. Reliable but opinionated: whole
+  categories are filtered (all sexual content, most markets) and its full-text index is
+  thin.
+- **`searxng`** — unfiltered metasearch through a built-in list of public SearXNG
+  instances over onion (Yandex, Bing, …). Instances are shared and rate-limit, so a
+  429 falls through to the next instance. Only `.onion` results are returned by default,
+  since clearnet results defeat the anonymity.
+- **`tor-taxi`** — look up the *official* `.onion` of a named darknet site (query =
+  lowercase site name, e.g. `pornhub`) from the tor.taxi anti-phishing directory. Useful
+  when Ahmia is full of clones and you need the address a site publishes itself.
 
-### Network behavior
+Result URLs can be handed straight to `fetch_page`.
 
-- **Hostnames resolve inside Tor.** The plugin hands the `.onion` hostname to Tor unresolved, so no
-  DNS lookup leaves your machine.
-- **Only v3 `.onion` hosts.** Clearnet URLs are refused, and so is any redirect that leaves the
-  onion network. The plugin can't be used as an anonymous proxy for regular websites.
-- **Your requests look like Tor Browser's.** Each request uses Tor Browser's user agent and sends
-  no cookies or referrer.
-- **No dependencies.** The SOCKS5 and HTTP client is about 400 lines on Node built-ins
-  (`node:net`, `node:tls`).
+### `fetch_page`
 
-## Requirements
+GET an onion URL and return its title, readable text, and onion links as untrusted
+text.
 
-You need a running Tor SOCKS proxy:
+### `post_page`
 
-```sh
-brew install tor
-brew services start tor        # listens on 127.0.0.1:9050
+POST a body to an onion URL (forms, JSON APIs such as OOPS or SearXNG's own API).
+`contentType` defaults to `application/x-www-form-urlencoded`. Marked `mutating`
+because the server can act on the request.
+
+## The JavaScript boundary (by design)
+
+The plugin fetches HTML and reads it as text. Pages that render their content in
+JavaScript — most modern SPAs, live video, JS-built market catalogs — come back empty or
+partial. That is a design boundary, not a bug: it keeps the plugin dependency-free and
+its egress surface tiny. For those pages, use Tor Browser, which can execute the page.
+
+## The search-source landscape (honest notes)
+
+- **Ahmia** curation is visible in its results: search adult content and it answers with
+  its "abuse material is not allowed" page rather than hits.
+- **SearXNG instances over onion** are community-run and rotate. The built-in list was
+  verified 2026-10; dead instances are skipped automatically, but a stale list eventually
+  means "No SearXNG instance answered" — refresh `SearXngInstances` in `src/sources.ts`.
+- **tor.taxi** is maintained by a volunteer and goes stale: it returns HTTP 200 even when
+  the listed onion has rotated, so a lookup succeeding does not prove the onion is live.
+  Treat the result as a starting point, not ground truth.
+- The niche (non-mainstream) corners of the dark web are discovered through forums and
+  directories that link current onions, not through any search index. The tools here get
+  you to those entry points; the entry points do the rest.
+
+## Tor
+
+Start a local Tor daemon listening on the SOCKS port, e.g.:
+
+```
+brew services start tor
 ```
 
-On Linux, install the `tor` package and enable its service. To use Tor Browser's proxy instead,
-set `JAZZ_TOR_PROXY=127.0.0.1:9150`.
+Or, when using Tor Browser, point the plugin at its SOCKS proxy:
 
-## Install
-
-Install it straight from GitHub. You don't need to clone or build anything. Installing doesn't
-trust or enable the plugin; those are separate steps:
-
-```sh
-jazz plugin add lvndry/jazz-plugin-onion                  # download and install
-jazz plugin inspect com.jazz.plugins.onion                # review the declarations
-jazz plugin trust com.jazz.plugins.onion                  # allow this exact code to run
-jazz plugin enable com.jazz.plugins.onion --agent <id-or-name>   # allow network access, enable for one agent
+```
+JAZZ_TOR_PROXY=127.0.0.1:9150 jazz
 ```
 
-To pin a version, use `jazz plugin add lvndry/jazz-plugin-onion@v0.1.0`.
-
-The manifest is `jazz-plugin.json`: id `com.jazz.plugins.onion`, entry `src/index.ts`. It declares
-the following:
-
-- 2 tools, both read-only.
-- The tools send the model's input over the network.
-- The Ahmia onion host is the plugin's only network destination.
-
-## Configuration
-
-| Variable         | Default          | Purpose                              |
-| ---------------- | ---------------- | ------------------------------------ |
-| `JAZZ_TOR_PROXY` | `127.0.0.1:9050` | `host:port` of the Tor SOCKS5 proxy. |
-
-## Things to know
-
-- **The first connection is slow.** Reaching an onion service for the first time takes 45–60s.
-  After that, requests take a few seconds. Each request times out after 90s.
-- **Pages are hostile input.** Onion sites are a good place to plant prompt injections. Enable this
-  plugin on a dedicated research agent, not one that also has shell, file-write or messaging tools.
-- **Ahmia isn't the whole dark web.** It indexes only what it can reach and filters what it lists.
-  To read a site Ahmia doesn't list, pass its URL to `fetch_page` directly.
-- **You're responsible for what you access.** Use this for research, threat intelligence, leak
-  monitoring and journalism, and follow the laws where you are.
+Cold onion connections (descriptor fetch, introduction, rendezvous) take 45–60 seconds;
+the timeout is 90 seconds.
 
 ## Develop
 
-```sh
-bun install
-bun test
-bun run typecheck
 ```
-
-The tests run offline against a fake Tor proxy.
-
-## License
-
-MIT
+bun install
+bun run typecheck
+bun test
+```
