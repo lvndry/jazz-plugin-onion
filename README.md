@@ -50,7 +50,9 @@ its egress surface tiny. For those pages, use Tor Browser, which can execute the
   means "No SearXNG instance answered" — refresh `SearXngInstances` in `src/sources.ts`.
 - **tor.taxi** is maintained by a volunteer and goes stale: it returns HTTP 200 even when
   the listed onion has rotated, so a lookup succeeding does not prove the onion is live.
-  Treat the result as a starting point, not ground truth.
+  As of 2026-10-20 its onion was unreachable even after identity rotation — the source
+  degrades to a timeout and the other sources still work. Treat the result as a starting
+  point, not ground truth.
 - The niche (non-mainstream) corners of the dark web are discovered through forums and
   directories that link current onions, not through any search index. The tools here get
   you to those entry points; the entry points do the rest.
