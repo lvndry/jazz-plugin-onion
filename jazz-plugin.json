@@ -88,7 +88,7 @@
         "required": ["url", "body"],
         "additionalProperties": false
       },
-      "riskLevel": "mutating",
+      "riskLevel": "high-risk",
       "egress": true
     }
   ],
